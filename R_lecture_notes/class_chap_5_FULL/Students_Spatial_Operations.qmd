@@ -1,0 +1,604 @@
+---
+title: "Spatial Operations"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,collapse=TRUE)
+```
+
+```{r}
+
+library(sf)      # vector data package
+library(terra)   # raster data package
+library(dplyr)   # tidyverse package for data frame manipulation
+library(spData)  # loads datasets used here
+library(here)
+library(tmap)
+```
+
+-   We will use the following datasets.
+
+```{r}
+elev = rast(system.file("raster/elev.tif", package = "spData"))
+grain = rast(system.file("raster/grain.tif", package = "spData"))
+```
+
+# Introduction
+
+<div>
+
+There are three tasks that we will cover today
+
+1.  Spatial filtering
+
+    <div>
+
+    -   With spatial queries like: Does it intersects?
+
+    </div>
+
+2.  Spatial Joins
+
+    <div>
+
+    -   Spatial joins between vector datasets
+
+    </div>
+
+3.  Aggregation.
+
+    <div>
+
+    -   Grouping by geometry
+
+    </div>
+
+</div>
+
+<div>
+
+**There is a link between attribute operations and spatial ones:**
+
+-   spatial subsetting: select rows based on geom.
+
+-   spatial joining: combine tables based on geom.
+
+-   aggregation: group observation based on geom.
+
+</div>
+
+<div>
+
+-   Spatial joins, for example, can be done in a number of ways:
+
+    -   matching entities that intersect with or are close enough to the target spot.
+
+-   To explore the spatial relationships (contained, overlaps, etc.) between objects:
+
+    -   use functions (**topological relations**) on sf objects.
+
+-   Distances: all spatial objects are related through space.
+
+    -   Distance calculations can be used to explore the strength of this relationship.
+
+</div>
+
+[**With respect to Rasters**]{.underline}
+
+<div>
+
+-   Spatial operations on raster objects include subsetting and merging several raster 'tiles' into a single object.
+
+-   Map algebra covers a range of operations that modify raster cell values, with or without reference to surrounding cell values
+
+    -   vital for many applications.
+
+-   We will also compute distances within rasters.
+
+-   Note that to apply any function on two spatial objects, the latter most share the same CRS!
+
+</div>
+
+## Vector data: subsetting
+
+<div>
+
+-   **Goal:** reshape an existing object in reference to another object.
+
+-   Subsets of `sf` data frames can be created with **square bracket (\[)** operator.
+
+    -   Syntax `x[y, , op = st_intersects]`, where `x` is an `sf` object from which a subset of rows will be returned.
+    -   `y` is the 'subsetting object' `op = st_intersects` specifies the topological relation to do the subsetting.
+
+</div>
+
+<div>
+
+-   The **default** topological relation is st_intersects()
+
+    -   the command x\[y, \] is identical to x\[y, , op = st_intersects\]
+
+-   The `filter()` function from the `tidyverse` can also be used.
+
+</div>
+
+## Vector data: subsetting
+
+-   Demonstration: `nz` and `nz_height` datasets.
+
+    -   contain geographic data on the 16 main regions and 101 highest points in New Zealand (projected CRS).
+
+-   Create an object representing Canterbury and return all high points in the region:
+
+```{r}
+
+# filter out Canterbury
+canterbury = nz %>% filter(Name == "Canterbury")
+# subset the high points that "intersect" the above, use nz_height.
+canterbury_height = nz_height[canterbury,, op = st_intersects]
+```
+
+```{r}
+
+tm_shape(canterbury) + 
+  tm_borders() +
+  tm_shape(canterbury_height) +
+  tm_symbols(shape = 17, col = "blue", size = .2)
+
+
+```
+
+**In summary:**
+
+<div>
+
+-   The command `x[y, ]` subsets features of a **target** `x` w.r.t. object `y`.
+
+-   Both `x` and `y` must be geographic objects (`sf`).
+
+-   Various topological relations for subsetting:
+
+    -   `touches`, `crosses` or `within` (among others).
+
+-   `st_intersects` is a **'catch all' instruction**
+
+    -   catches everything that touches, crosses or falls within the source 'subsetting' object
+
+</div>
+
+<div>
+
+-   Alternative spatial operators:
+
+    -   the opposite to st_intersects:
+    -   `nz_height[canterbury, op = st_disjoint]`
+
+-   plot the map of New Zealand and the high points [outside Canterbury]{.underline}.
+
+    -   `nz_height[canterbury, op = st_disjoint]`
+
+</div>
+
+[SUBSETTING in smaller steps]{.underline}
+
+<div>
+
+**Topological Operators Outputs**
+
+-   They return [**sparse**]{.underline} objects that can be used for subsetting.
+
+-   In the below code, we create an object with `(empty)` and `1`.
+
+    <div>
+
+    -   `empty` indicates no intersection between the target object and the subsetting object.
+
+    </div>
+
+-   it is an empty vector with length zero.
+
+-   Then we transform the latter into a **logical vector**.
+
+-   Finally we conduct the **subsetting operation**.
+
+</div>
+
+------------------------------------------------------------------------
+
+```{r}
+
+# intersect heights and Canterbury
+heights_in_cant_sparse = st_intersects(x = nz_height, y = canterbury)
+
+class(heights_in_cant_sparse)
+
+heights_in_cant_sparse
+
+# transform this into a logical
+# lengths: applied to each element in a list
+
+heights_in_cant_logical = lengths(heights_in_cant_sparse) > 0
+
+# carry out the subsetting
+
+canterbury_height2 = nz_height[heights_in_cant_logical, ]
+```
+
+**THE dplyr approach:**
+
+-   `st_filter`: similar to the standard `dplyr`.
+
+```{r}
+canterbury_height3 = nz_height %>%
+  st_filter(y = canterbury, .predicate = st_intersects)
+```
+
+------------------------------------------------------------------------
+
+# Vector data: spatial relations
+
+-   Sometimes it is important to establish whether two objects are spatially related.
+
+    -   **Topological relations**: pin down the existence of a spatial relation.
+
+-   Symmetric operators:
+
+1.  equals
+2.  intersects
+3.  crosses
+4.  touches
+5.  overlaps
+
+-   Asymmetric operators:
+
+1.  contains
+2.  within
+
+## **Visualization**
+
+-   Let's create an example.
+-   First, **we create a polygon**: use `cbind` to generate a matrix of vertices.
+-   use `st_sfc` and `st_polygon` to create an `sf`.
+-   we will **create a line and group of points**.
+-   we will **visually** examine the spatial relationships.
+-   Finally, we will use the **operators** (binary predicates) to corroborate our visual inspection.
+
+```{r fig1, fig.asp= .5}
+
+# A matrix has vectors inide:
+
+polygon_matrix = cbind(
+  x = c(0, 0, 1, 1,   0),
+  y = c(0, 1, 1, 0.5, 0)
+)
+
+# then we need to set it as a list and classify it as a polygon:
+
+polygon_matrix = list(polygon_matrix) %>% st_polygon()
+
+# transform it into a sf-column
+
+polygon_sfc = st_sfc(polygon_matrix)
+
+tmap::tm_shape(polygon_sfc) + tmap::tm_polygons() + tmap::tm_grid(lines = FALSE)
+
+```
+
+Now let's do the line:
+
+```{r}
+line_matrix = cbind(
+  x = c(0.4, 1),
+  y = c(0.2, 0.5))
+
+line_sfc = st_sfc(st_linestring(line_matrix))
+
+```
+
+Now a set of points:
+
+-   To do this, you need data frame listing the x and y coordinates.
+
+-   then, you need to apply st_as_sf indicating the coordinate columns.
+
+```{r}
+
+# create a data frame of points
+(point_df = data.frame(
+  coord_x = c(0.2, 0.7, 0.4),
+  coord_y = c(0.1, 0.2, 0.8)
+)) 
+library(tibble)
+
+point_sf = st_as_sf(point_df, coords = c("coord_x", "coord_y")) %>% 
+  rowid_to_column("ID") %>% 
+  mutate(ID=as.character(ID))
+
+```
+
+```{r fig2, fig.asp= .5}
+
+oldw <- getOption("warn")
+options(warn = -1)
+
+tmap::tm_shape(polygon_sfc) + tmap::tm_polygons() + 
+  tmap::tm_shape(line_sfc) + tmap::tm_lines(scale = 10) +
+  tmap::tm_shape(point_sf) + 
+  tmap::tm_dots(scale=5, legend.show = F,col = "turquoise", alpha = .7, size= .1) +
+  tmap::tm_text("ID", size = .5) +
+  tmap::tm_grid(lines = FALSE)
+
+options(warn = oldw)
+
+```
+
+## Spatial Queries
+
+-   Let's conduct a simple **query**.
+-   Which of the points in `point_sf` intersect in some way with `polygon_sfc`?
+-   This question can be answered with the spatial predicate `st_intersects()` as follows:
+
+```{r}
+
+# The code below sets sparse=FALSE to coerce the output 
+# into a logical vector, instead of a sparse matrix.
+#intercept boll ceviriyo alan içindeyse true
+st_intersects(point_sf, polygon_sfc, sparse = FALSE)
+
+# A sparse matrix is a list of vectors with
+# empty elements where a match doe not exists.
+
+```
+
+-   Which points **lie within** the polygon?
+-   Which features **are on or contain a shared boundary** with y?
+-   These can be answered as follows:
+
+```{r}
+st_within(point_sf, polygon_sfc)
+st_touches(point_sf, polygon_sfc)
+```
+
+-   The opposite of `st_intersects()` is `st_disjoint()`, which returns only objects that do not spatially relate in any way to the selecting object
+
+```{r}
+
+# note [, 1] converts the result into a vector:
+
+st_disjoint(point_sf, polygon_sfc, sparse = FALSE)[, 1]
+
+```
+
+**Distance-based Queries**
+
+-   `st_is_within_distance()` detects features within a distance from the target.
+
+-   It can be used to set **how close target objects need to be** before they are selected.
+
+-   Distances between points and polyongs are measured to the **nearest edge**,
+
+    -   In our case **point 2's distance to the polygon** is measured with respect to the edge above it..
+    -   Verify the actual distance between **point 2** and the polygon is 0.13 with the command `st_distance(point_sf, polygon_sfc)`.
+
+-   The **'is within distance'** binary spatial predicate is demonstrated in the code chunk below,
+
+-   Indeed, every point is within 0.2 units of the polygon:
+
+```{r}
+st_is_within_distance(point_sf, polygon_sfc,
+                      dist = 0.1, sparse = FALSE)[, 1]
+
+st_distance(point_sf,polygon_sfc)
+
+```
+
+------------------------------------------------------------------------
+
+## Vector data: spatial joining
+
+<div>
+
+-   Joining two **non-spatial** datasets relies on a **shared 'key' variable**
+
+-   Spatial data joining applies the same concept drawing **on spatial relations**
+
+-   Joining adds new columns to the target object **x**, from a source object **y**.
+
+-   *Example*:
+
+    -   ten points randomly distributed across the Earth's surface
+    -   for the points that are on land, which countries are they in?
+
+[**MORE SPECIFICALLY**]{.underline}
+
+-   Establish the `bbox` for the analysis: "the entire globe"
+
+-   Create points that are randomly scattered over the Earth's surface. Use the r's uniform distribution, and make sure the values fall into the `bbox`
+
+-   Set the points as an sf object.
+
+</div>
+
+```{r}
+set.seed(2018) # set seed for reproducibility
+(bb = st_bbox(world)) # the world's bounds
+
+# create a data frame
+
+random_df = data.frame(
+  
+  x = runif(n = 10, # number of points
+            min = bb[1], # lower bound
+            max = bb[3]),# upper bound
+  
+  y = runif(n = 10,
+            min = bb[2],
+            max = bb[4])
+)
+
+random_points = random_df %>% 
+  st_as_sf(coords = c("x", "y")) %>% # set coordinates
+  st_set_crs("EPSG:4326") # set geographic CRS
+
+```
+
+4.  Now, plot the points on an earth's map.
+
+```{r fig5, fig.asp= .5}
+
+st_crs(world) <- 4326
+
+tm_shape(world) +
+  tm_borders() +
+  tm_shape(random_points) +
+  tm_symbols(shape = 17, col = "blue", size = .2)
+
+
+```
+
+-   We want the object `world_random` yielding only countries that contain random points
+
+    -   we will obtain it via a **spatial join**.
+
+```{r}
+
+# find the countries "touched" by random points
+(world_random = world[random_points,])
+
+```
+
+-   Take the data_frame with the random points.
+-   For each random point, find what country it belongs to.
+-   `st_join` is the **crucial** function here.
+
+```{r}
+# find the points that touch a country.
+(random_joined = 
+   st_join(random_points, select(world,name_long),
+           join = st_intersects))
+```
+
+```{r}
+tm_shape(world) +
+  tm_borders() +
+  tm_shape(world_random) + 
+  tm_polygons("name_long") + # This will set a different color to the selected countries
+  tm_shape(random_points) + 
+  tm_symbols(shape = 17, col = "blue", size = .2)
+
+```
+
+## a few comments on spatial joins.
+
+<div>
+
+-   By default, `st_join()` performs a left join
+
+-   ALL ROWS from x including rows with no match in y.
+
+-   It can also do [**inner joins**]{.underline}
+
+    -   set the argument left = FALSE.
+
+</div>
+
+<div>
+
+-   The default topological operator used by `st_join()` is `st_intersects()`
+
+-   [Warning]{.underline}:
+
+    -   When **x** contains polygons, each of which match multiple objects in **y**, spatial joins will result in duplicate features, creates a new row for each match in y (**see the homework**).
+
+</div>
+
+## Non-overlapping joins
+
+-   Sometimes two geographic datasets do not touch but still have a strong geographic relationship.
+-   The datasets `cycle_hire` and `cycle_hire_osm` provide a good example.
+-   Plotting them shows that they are often closely related but they do not touch.
+
+### London bike hire key information
+
+-   You can hire bikes using London's public cycle hire scheme, Santander Cycles.
+-   Riders will find 800 docking stations and 12,000 bikes to hire around London.
+-   Bikes can be hired using a bank card at the docking station or using the official Santander Cycles app.
+
+```{r}
+plot(st_geometry(cycle_hire), col = "blue", main = "London Cycle points: official-blue, OpenStreetMap-red")
+plot(st_geometry(cycle_hire_osm), add = TRUE, pch = 3, col = "red")
+```
+
+-   We can check if any points are the same:
+
+    -   `any`: given a set of logical vectors, is at least one of the values true?
+
+```{r}
+st_touches(cycle_hire, cycle_hire_osm, sparse = FALSE) %>% 
+any()
+
+```
+
+<div>
+
+**THE TASK AT HAND**
+
+-   Imagine that we need to join the **capacity variable** in `cycle_hire_osm` onto the official 'target' data contained in `cycle_hire`.
+-   This is when a non-overlapping join is needed.
+-   The simplest method is to use the topological operator st_is_within_distance()
+    -   use a threshold distance of 20 m.
+    -   [that is, assume that if two points, belonging each to a different dataset, are close enough, then they speak about the same spot]{.underline}.
+
+</div>
+
+```{r}
+head(cycle_hire)
+```
+
+```{r}
+head(cycle_hire_osm)
+```
+
+-   How to retrieve the values associated with the respective `cycle_hire_osm` points?
+-   The solution is again with `st_join()`.
+
+```{r}
+
+aux = st_join(cycle_hire,
+              select(cycle_hire_osm,capacity),
+              join = st_is_within_distance,
+            dist = 20)
+
+nrow(cycle_hire)
+nrow(aux)
+head(aux)
+
+```
+
+-   Note that the number of rows in the joined result is greater than the target.
+-   **This is because some cycle hire stations in cycle_hire have multiple matches in** `cycle_hire_osm`.
+    -   our method generated multiple candidate points to be coupled with the official data.
+-   Use NON-SPATIAL [aggregation methods]{.underline}:
+    -   Take the capacity mean of the candidates and assign that to the corresponding point in the official data.
+
+```{r}
+aux = aux %>% 
+  group_by(id) %>% 
+  summarize(capacity = mean(capacity))
+nrow(aux) == nrow(cycle_hire)
+#> [1] TRUE
+```
+
+```{r}
+plot(cycle_hire_osm["capacity"], main="actual capacity")
+```
+
+```{r}
+plot(aux["capacity"], main= "estimated capacity")
+```
+
+------------------------------------------------------------------------
+
+## NEXT CLASS: Spatial Aggregation and Raster operations!

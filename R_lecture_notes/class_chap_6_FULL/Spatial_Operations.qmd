@@ -1,0 +1,1487 @@
+---
+title: "Spatial Operations"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,collapse=TRUE)
+```
+
+```{r}
+
+library(sf)      # vector data package
+library(terra)   # raster data package
+library(tidyverse)   # tidyverse package for data frame manipulation
+library(spData)  # loads datasets used here
+library(here)
+```
+
+-   We will use the following datasets.
+
+```{r}
+elev = rast(system.file("raster/elev.tif", package = "spData"))
+grain = rast(system.file("raster/grain.tif", package = "spData"))
+```
+
+# Introduction
+
+<div>
+
+There are three tasks that we will cover today
+
+1.  Spatial filtering
+
+    <div>
+
+    -   With spatial queries like: Does it intersects?
+
+    </div>
+
+2.  Spatial Joins
+
+    <div>
+
+    -   Spatial joins between vector datasets
+
+    </div>
+
+3.  Aggregation.
+
+    <div>
+
+    -   Grouping by geometry
+
+    </div>
+
+</div>
+
+<div>
+
+**There is a link between attribute operations and spatial ones:**
+
+-   spatial subsetting: select rows based on geom.
+
+-   spatial joining: combine tables based on geom.
+
+-   aggregation: group observation based on geom.
+
+</div>
+
+<div>
+
+-   Spatial joins, for example, can be done in a number of ways:
+
+    -   matching entities that intersect with or are close enough to the target spot.
+
+-   To explore the spatial relationships (contained, overlaps, etc.) between objects:
+
+    -   use functions (**topological relations**) on sf objects.
+
+-   Distances: all spatial objects are related through space.
+
+    -   Distance calculations can be used to explore the strength of this relationship.
+
+</div>
+
+[**With respect to Rasters**]{.underline}
+
+<div>
+
+-   Spatial operations on raster objects include **subsetting** and **merging** several raster 'tiles' into a single object.
+
+-   Map algebra covers a range of **operations that modify raster cell values**, with or without reference to surrounding cell values
+
+    -   vital for many applications.
+
+-   We will also **compute distance**s within rasters.
+
+-   *Note that to apply any function on two spatial objects, the latter most share the same CRS!*
+
+</div>
+
+## Vector data: filtering
+
+<div>
+
+-   **Goal:** reshape an existing object in reference to another object.
+
+-   Subsets of `sf` data frames can be created with **square bracket (\[)** operator.
+
+    -   Syntax `x[y, , op = st_intersects]`, where `x` is an `sf` object from which a subset of rows will be returned.
+    -   `y` is the 'subsetting object' `op = st_intersects` specifies the topological relation to do the subsetting.
+
+</div>
+
+<div>
+
+-   The **default** topological relation is st_intersects()
+
+    -   the command x\[y, \] is identical to x\[y, , op = st_intersects\]
+
+-   A version of `filter()` function from the `tidyverse` can also be used.
+
+</div>
+
+## Vector data: subsetting
+
+-   Demonstration: `nz` and `nz_height` datasets.
+
+    -   contain geographic data on the 16 main regions and 101 highest points in New Zealand (projected CRS).
+
+-   Create an object representing Canterbury and return all high points in the region:
+
+```{r}
+# filter out Canterbury
+canterbury = nz %>% filter(Name == "Canterbury")
+# subset the high points that "intersect" the above.
+(canterbury_height = nz_height[canterbury, ])
+```
+
+```{r}
+
+tmap::tm_shape(canterbury) + tmap::tm_borders() +
+tmap::tm_shape(canterbury_height) + tmap::tm_symbols(shape = 17, col = "blue", size = .2)
+
+
+```
+
+<div>
+
+-   The command `x[y, ]` subsets features of a **target** `x` w.r.t. object `y`.
+
+-   Both `x` and `y` must be geographic objects (`sf`).
+
+-   Various topological relations for subsetting:
+
+    -   `touches`, `crosses` or `within` (among others).
+
+-   `st_intersects` is a 'catch all' instruction
+
+    -   catches everything that touches, crosses or falls within the source 'subsetting' object
+
+</div>
+
+<div>
+
+-   Alternative spatial operators: write desired op = argument.
+
+    -   the opposite to st_intersects:
+    -   `nz_height[canterbury, , op = st_disjoint]`
+
+-   plot the map of New Zealand and the high points outside Canterbury.
+
+-   Note the **empty argument** --- denoted with , , --- is included to highlight **op**.
+
+-   The second argument may change the subsetting operation:
+
+    -   `nz_height[canterbury, 2, op = st_disjoint]`
+
+-   The above returns the same rows but only includes the **second attribute column**.
+
+</div>
+
+<div>
+
+**Topological Operators Outputs**
+
+-   They return objects that can be used for subsetting.
+
+-   In the below code, we create an object with `(empty)` and `1`.
+
+    <div>
+
+    -   `empty` indicates no intersection between the target object and the subsetting object.
+
+    </div>
+
+-   it is an empty vector with length zero.
+
+-   Then we transform the latter into a **logical vector**.
+
+-   Finally we conduct the **subsetting operation**.
+
+</div>
+
+------------------------------------------------------------------------
+
+```{r}
+
+# intersect heights and Canterbury
+sel_sgbp = st_intersects(x = nz_height, y = canterbury)
+
+class(sel_sgbp)
+
+sel_sgbp
+
+# transform this into a logical
+# lengths: applied to each element in a list
+
+sel_logical = lengths(sel_sgbp) > 0
+
+# carry out the subsetting
+
+canterbury_height2 = nz_height[sel_logical, ]
+```
+
+-   One can repurpose the above operation.
+
+    -   For instance: keep those elements that intersect with more than one element in the subsetting object.
+
+-   `st_filter`: similar to the standard `dplyr`.
+
+```{r}
+canterbury_height3 = nz_height %>%
+  st_filter(y = canterbury, .predicate = st_intersects)
+```
+
+------------------------------------------------------------------------
+
+# Vector data: spatial relations
+
+-   Sometimes it is important to establish whether two objects are spatially related.
+
+    -   **Topological relations**: pin down the existence of a spatial relation.
+
+-   Symmetric operators:
+
+1.  equals
+2.  intersects
+3.  crosses
+4.  touches
+5.  overlaps
+
+-   Asymmetric operators:
+
+1.  contains
+2.  within
+
+## **Visualization**
+
+-   Let's create an example.
+-   First, we create a polygon: use `cbind` to generate a matrix of vertices.
+-   use `st_sfc` and `st_polygon` to create an `sf`.
+-   we will create a line and group of points.
+-   we will visually examine the spatial relationships.
+-   Finally, we will use the operators (binary predicates) to corroborate our visual inspection.
+
+```{r fig1, fig.asp= .5}
+polygon_matrix = cbind(
+  x = c(0, 0, 1, 1,   0),
+  y = c(0, 1, 1, 0.5, 0)
+)
+polygon_sfc = st_sfc(st_polygon(list(polygon_matrix)))
+
+tmap::tm_shape(polygon_sfc) + tmap::tm_polygons() + tmap::tm_grid(lines = FALSE)
+
+```
+
+```{r}
+line_matrix = cbind(
+  x = c(0.4, 1),
+  y = c(0.2, 0.5))
+
+line_sfc = st_sfc(st_linestring(line_matrix))
+
+# create a data frame of points
+(point_df = data.frame(
+  x = c(0.2, 0.7, 0.4),
+  y = c(0.1, 0.2, 0.8)
+)) 
+point_sf = st_as_sf(point_df, coords = c("x", "y")) %>% 
+  tibble::rowid_to_column("ID") %>% mutate(ID=as.character(ID))
+
+```
+
+```{r fig2, fig.asp= .5}
+
+oldw <- getOption("warn")
+options(warn = -1)
+
+tmap::tm_shape(polygon_sfc) + tmap::tm_polygons() + 
+  tmap::tm_shape(line_sfc) + tmap::tm_lines(scale = 10) +
+  tmap::tm_shape(point_sf) + 
+  tmap::tm_dots(scale=5, legend.show = F,col = "turquoise", alpha = .7, size= .1) +
+  tmap::tm_text("ID", size = .5) +
+  tmap::tm_grid(lines = FALSE)
+
+options(warn = oldw)
+
+```
+
+## Spatial Queries
+
+-   Let's conduct a simple **query**.
+-   Which of the points in `point_sf` intersect in some way with `polygon_sfc`?
+-   This question can be answered with the spatial predicate st_intersects() as follows:
+
+```{r}
+
+# The code below sets sparse=FALSE to coerce the output 
+# into a logical vector, instead of a sparse matrix.
+
+st_intersects(point_sf, polygon_sfc, sparse = FALSE)
+
+# A sparse matrix is a list of vectors with
+# empty elements where a match doe not exists.
+
+```
+
+-   Which points lie within the polygon?
+-   Which features are on or contain a shared boundary with y?
+-   These can be answered as follows:
+
+```{r}
+st_within(point_sf, polygon_sfc)
+st_touches(point_sf, polygon_sfc)
+```
+
+-   The opposite of `st_intersects()` is `st_disjoint()`, which returns only objects that do not spatially relate in any way to the selecting object
+
+```{r}
+
+# note [, 1] converts the result into a vector:
+
+st_disjoint(point_sf, polygon_sfc, sparse = FALSE)[, 1]
+
+```
+
+-   `st_is_within_distance()` detects features within a distance from the target.
+
+-   It can be used to set how close target objects need to be before they are selected.
+
+    -   recall the hydrocarbon processing plants!
+
+-   Although **point 2** is more than 0.2 units of distance from the nearest vertex of **polygon_sfc**, it is **still selected** when the distance is set to 0.2.
+
+-   This is because distance is measured to the **nearest edge**,
+
+    -   In this case the part of the the polygon that lies directly above **point 2**.
+    -   Verify the actual distance between **point 2** and the polygon is 0.13 with the command `st_distance(point_sf, polygon_sfc)`.
+
+-   The **'is within distance'** binary spatial predicate is demonstrated in the code chunk below,
+
+-   Indeed, every point is within 0.2 units of the polygon:
+
+```{r}
+st_is_within_distance(point_sf, polygon_sfc,
+                      dist = 0.2, sparse = FALSE)[, 1]
+```
+
+------------------------------------------------------------------------
+
+## Vector data: spatial joining
+
+<div>
+
+-   Joining two **non-spatial** datasets relies on a **shared 'key' variable**
+
+-   Spatial data joining applies the same concept drawing **on spatial relations**
+
+-   Joining adds new columns to the target object **x**, from a source object **y**.
+
+-   *Example*:
+
+    -   ten points randomly distributed across the Earth's surface
+    -   for the points that are on land, which countries are they in?
+
+[**MORE SPECIFICALLY**]{.underline}
+
+-   Establish the `bbox` for the analysis: "the entire globe"
+
+-   Create points that are randomly scattered over the Earth's surface. Use the r's uniform distribution, and make sure the values fall into the `bbox`
+
+-   Set the points as an sf object.
+
+</div>
+
+```{r}
+set.seed(2018) # set seed for reproducibility
+(bb = st_bbox(world)) # the world's bounds
+
+# create a data frame
+
+(random_df = data.frame(
+  
+  x = runif(n = 10, # number of points
+            min = bb[1], # lower bound
+            max = bb[3]),# upper bound
+  
+  y = runif(n = 10,
+            min = bb[2],
+            max = bb[4])
+)
+)
+(random_points = random_df %>% 
+  st_as_sf(coords = c("x", "y")) %>% # set coordinates
+  st_set_crs("EPSG:4326") # set geographic CRS
+)
+```
+
+4.  Now, plot the points on an earth's map.
+
+```{r fig5, fig.asp= .5}
+
+library(tmap)
+
+st_crs(world) <- 4326
+
+tm_shape(world) +
+  tm_borders() +
+  tm_shape(random_points) +
+  tm_symbols(shape = 17, col = "blue", size = .2)
+
+
+```
+
+-   We want the object `world_random` yielding only countries that contain random points
+
+    -   we will obtain it via a **spatial join**.
+
+```{r}
+
+# find the countries "touched" by random points
+(world_random = world[random_points,])
+
+# Do the same with st_filter
+
+alternative = st_filter(world,random_points, .predicate = st_intersects)
+
+#prove they are identical
+
+identical(world_random,alternative)
+
+```
+
+-   Take the data_frame with the random points.
+-   For each random point, find what country it belongs to.
+-   `st_join` is the **crucial** function here.
+
+```{r}
+# find the points that touch a country.
+(random_joined = 
+   st_join(random_points, select(world,name_long),
+           join = st_intersects))
+```
+
+```{r}
+tm_shape(world) +
+  tm_borders() +
+  tm_shape(world_random) + 
+  tm_polygons("name_long") + # This will set a different color to the selected countries
+  tm_shape(random_points) + 
+  tm_symbols(shape = 17, col = "blue", size = .2)
+
+```
+
+Over time, `ggplot` may take over `tmap`, so it is a good idea to explore its advantages. In particular, `sf_geom` recognizes the type of geometry you want to plot.
+
+```{r}
+
+# The ggplot way
+
+
+ggplot() +
+  geom_sf(data = world,colour = "black", fill = NA) +
+  geom_sf(data = world_random,aes(fill = name_long),show.legend = T) +
+  geom_sf(data = random_points,col = "blue",shape = 17) +
+  geom_sf_label(data = world_random, aes(label = iso_a2),size=2)
+
+
+
+```
+
+## A few comments on spatial joins.
+
+<div>
+
+-   By default, `st_join()` performs a left join
+
+-   ALL ROWS from x including rows with no match in y.
+
+-   It can also do [**inner joins**]{.underline}
+
+    -   set the argument left = FALSE.
+
+</div>
+
+<div>
+
+-   The default topological operator used by `st_join()` is `st_intersects()`
+
+-   [Warning]{.underline}:
+
+    -   When **x** contains polygons, each of which match multiple objects in **y**, spatial joins will result in duplicate features, creates a new row for each match in y (**see the homework**).
+
+</div>
+
+## Non-overlapping joins
+
+-   Sometimes two geographic datasets do not touch but still have a strong geographic relationship.
+-   The datasets `cycle_hire` and `cycle_hire_osm` provide a good example.
+-   Plotting them shows that they are often closely related but they do not touch.
+
+### London bike hire key information
+
+-   You can hire bikes using London's public cycle hire scheme, Santander Cycles.
+-   Riders will find 800 docking stations and 12,000 bikes to hire around London.
+-   Bikes can be hired using a bank card at the docking station or using the official Santander Cycles app.
+
+```{r}
+plot(st_geometry(cycle_hire), col = "blue", main = "London Cycle points: official-blue, OpenStreetMap-red")
+plot(st_geometry(cycle_hire_osm), add = TRUE, pch = 3, col = "red")
+```
+
+-   We can check if any points are the same:
+
+    -   `any`: given a set of logical vectors, is at least one of the values true?
+
+```{r}
+st_touches(cycle_hire, cycle_hire_osm, sparse = FALSE) %>% 
+any()
+
+```
+
+<div>
+
+**THE TASK AT HAND**
+
+-   Imagine that we need to join the **capacity variable** in `cycle_hire_osm` onto the official 'target' data contained in `cycle_hire`.
+-   This is when a non-overlapping join is needed.
+-   The simplest method is to use the topological operator st_is_within_distance()
+    -   use a threshold distance of 20 m.
+    -   [that is, assume that if two points, belonging each to a different dataset, are close enough, then they speak about the same spot]{.underline}.
+
+</div>
+
+```{r}
+head(cycle_hire)
+```
+
+```{r}
+head(cycle_hire_osm)
+```
+
+-   How to retrieve the values associated with the respective `cycle_hire_osm` points?
+-   The solution is again with `st_join()`.
+
+```{r}
+
+aux = st_join(cycle_hire,
+              select(cycle_hire_osm,capacity),
+              join = st_is_within_distance,
+            dist = 20)
+
+nrow(cycle_hire)
+nrow(aux)
+head(aux)
+
+```
+
+-   Note that the number of rows in the joined result is greater than the target.
+-   **This is because some cycle hire stations in cycle_hire have multiple matches in** `cycle_hire_osm`.
+    -   our method generated multiple candidate points to be coupled with the official data.
+-   Use NON-SPATIAL [aggregation methods]{.underline}:
+    -   Take the capacity mean of the candidates and assign that to the corresponding point in the official data.
+
+```{r}
+aux = aux %>% 
+  group_by(id) %>% 
+  summarize(capacity = mean(capacity))
+nrow(aux) == nrow(cycle_hire)
+#> [1] TRUE
+```
+
+```{r}
+plot(cycle_hire_osm["capacity"], main="actual capacity")
+```
+
+```{r}
+plot(aux["capacity"], main= "estimated capacity")
+```
+
+------------------------------------------------------------------------
+
+## Spatial Aggregation
+
+-   Spatial data aggregation condenses data!
+
+-   Consider New Zealand: find out [the average height of high points in each region]{.underline}
+
+    <div>
+
+    -   In other words...
+
+    -   Show the average value of features in `nz_height` within each of New Zealand's 16 regions.
+
+    </div>
+
+-   The code below says: *from `nz_height`, tell me what elements intersect* `nz`
+
+```{r}
+(nz_agg2 = st_join(x = nz, y = nz_height, join = st_intersects))
+```
+
+-   The code below aggregates `nz_agg2`
+
+```{r}
+nz_agg2 = nz_agg2 %>%
+  group_by(Name) %>%
+  summarize(elevation = mean(elevation, na.rm = TRUE)) 
+  head(nz_agg2)
+```
+
+```{r}
+
+tmap::tm_shape(nz)+tmap::tm_borders() +
+  tmap::tm_shape(nz_agg2) + tmap::tm_polygons("elevation")
+
+library(ggspatial)
+
+ggplot(data = nz) +
+  geom_sf(data = nz) +
+  geom_sf(data = nz_agg2, aes(fill = elevation)) +
+  scale_fill_viridis_c(option = "plasma") +
+  theme(
+  panel.background = element_rect(fill = "lightblue",
+                                colour = "lightblue",
+                                size = 0.5, linetype = "solid"))
+
+
+```
+
+<div>
+
+**The resulting `nz_agg` objects have the same geometry as the aggregating object `nz` but with a new column summarizing the values of `x` in each region using the function `mean()`** - It is a left-join.
+
+</div>
+
+## Joining incongruent layers
+
+<div>
+
+-   Spatial congruence: when you can construct larger entities from smaller ones.
+
+    <div>
+
+    -   States are formed by counties.
+
+    -   Continents are formed by countries
+
+    </div>
+
+-   Incongruent aggregating objects: when smaller entities do not share limits with the larger objects.
+
+    -   Problematic for spatial aggregation
+
+</div>
+
+### [**Potential Solution: Aerial Interpolation**]{.underline}
+
+Think of larger area as a state.
+
+Think of a smaller area as plantations for which we have their output.
+
+<div>
+
+1.  Take the portions of the smaller areas enclosed in the larger one.
+2.  Measure in % terms, how much they cover of the larger area
+3.  Form a weighted average of the plantations' output
+
+The above will give you an estimate of a state agricultural output.
+
+</div>
+
+Let's try out an exercise.
+
+<div>
+
+1.  Observe the dataset `incongruent`
+    -   colored polygons with black borders in the right panel
+2.  Observe the data set `aggregating_zones`
+    -   Two larger polygons
+3.  Assume that the value column of `incongruent` refers to the [total regional income]{.underline}.
+    -   How can we *transfer the values* of the *underlying nine spatial polygons* into the two polygons of *aggregating_zones*?
+
+</div>
+
+```{r}
+
+
+
+ggplot() +
+  geom_sf(data = incongruent) +
+  geom_sf(data = aggregating_zones,alpha = 0.5, col = "grey",aes(fill = as.factor(geo_code)))
+
+
+```
+
+### Area weighted spatial interpolation
+
+-   Transfers values from the `incongruent` object to a new column in `aggregating_zones` **in proportion with the area of overlap**:
+    -   the larger the spatial intersection between input and output features, the larger the corresponding value.
+    -   This is implemented in `st_interpolate_aw()`
+
+<!-- -->
+
+-   The code below reads: take the income values from the smaller regions to estimate the income in the larger regions.
+    -   the **weights** of this sum correspond to the smaller areas relative size.
+
+```{r}
+
+inc_val = incongruent %>% 
+  select(value) # keep only the values to be transferred
+
+(agg_aw = st_interpolate_aw(inc_val, aggregating_zones,
+                           ext = TRUE)
+)
+```
+
+```{r}
+plot(inc_val)
+
+```
+
+## Joining incongruent layers
+
+```{r}
+
+plot(agg_aw)
+
+```
+
+<div>
+
+## Extensive vs intensive variables.
+
+-   Total income is a so-called **spatially extensive** variable (*which increases with area*)
+    -   Our aggregating method assumes income is evenly distributed across the smaller zones.
+
+        <div>
+
+        -   for example 1 squared meter equates 100 dollars
+
+        -   then, 10 squared meter equates 1k dollars
+
+        </div>
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+-   This would be different for **spatially intensive** variables such as income *per capita* or percentages.
+    -   these do not increase as the area increases.
+
+        <div>
+
+        -   Take simple averages here!
+
+        </div>
+
+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--
+
+-   `st_interpolate_aw()` works equally with spatially intensive variables
+    -   set the **extensive parameter** to FALSE and it will use a **simple** **average** rather than a **weighted-sum** function when doing the aggregation.
+
+</div>
+
+------------------------------------------------------------------------
+
+## Distance relations
+
+-   The distance between two objects is calculated with the `st_distance()` function.
+
+-   Find the distance between the highest point in New Zealand and the geographic centroid of the Canterbury region.
+
+```{r}
+
+# with respect to elevation,
+# take the top 1 observation.
+
+nz_heighest = nz_height %>%
+  slice_max(n = 1, order_by = elevation)
+
+canterbury_centroid = st_centroid(canterbury)
+
+st_distance(nz_heighest, canterbury_centroid)
+
+
+```
+
+-   The output of `st_distance` : Adistance matrix describing all combinations of features in objects x and y.
+
+-   Find the distances between the first three features in `nz_height` and the **Otago** and **Canterbury** regions of New Zealand.
+
+```{r}
+co = filter(nz, Name %in% c("Canterbury","Otago"))
+st_distance(nz_height[1:3, ], co)
+```
+
+-   Note that the distance between the second and third features in `nz_height` and the second feature in `co` is zero.
+
+-   This demonstrates the fact that distances between points and polygons refer to the distance **to any part of the polygon**
+
+    <div>
+
+    -   The second and third points in `nz_height` are in Otago, which can be verified by plotting them:
+
+    </div>
+
+```{r}
+
+ggplot() +
+  geom_sf(data = st_geometry(co)[2]) +
+  geom_sf(data = st_geometry(nz_height)[2:3],shape = 14, col = "blue", size = 4)
+
+```
+
+## Practice:
+
+-   First let's watch some videos on Mexico's Conquest.
+
+    [Colonial Mexico](https://www.youtube.com/watch?v=V8vsNprk4vc)
+
+    [Labor System in Colonial Mexico](https://www.youtube.com/watch?v=f1h-9W2Snik)
+
+-   We want to know if the prehispanic districts with more villages, ended up containing larger numbers of Spanish towns after the Conquest.
+
+-   This amounts to using prehispanic settlements to predict conquistadors' settlements.
+
+```{r}
+
+# load("~/Project/data/Mexico_Violence/18_concentrated/Z_outputs/mex_historical.RData")
+
+load(here("data","mex_historic.RData"))
+
+# prehisp_poly = mex_historical$lugo_paper$lugo_prehisp_poly
+# 
+# prehisp_points = mex_historical$lugo_paper$lugo_prehisp_points
+# 
+# colonial_points = mex_historical$digging_early_mex_repo$primary_sources$polygon_NO$DPYT_Suma.shp
+
+ # save(list = c("prehisp_poly","prehisp_points","colonial_points"), file = 
+ #        here("data","mex_historic.RData"))
+
+mex = world %>% 
+  filter(name_long == "Mexico")
+
+ggplot() + 
+  geom_sf(data = mex) + 
+  geom_sf(data = prehisp_poly) + 
+  geom_sf(data = prehisp_points)
+
+ggplot() + 
+  geom_sf(data = prehisp_poly) + 
+  geom_sf(data = prehisp_points)
+
+ggplot() + 
+  geom_sf(data = prehisp_poly) + 
+  geom_sf(data = colonial_points)
+  
+
+```
+
+### Instructions:
+
+1.  Find the prehispanic and colonial points inside each prehispanic polygon and count them.
+
+2.  Use `ggplot` to produce a scatter plot where the x-axis represents the number of prehispanic towns, and the y-axis refers to the number of colonial settlements.
+
+    <div>
+
+    -   The code for the plot should look like this:
+
+        `ggplot(data = your_joined_data,`
+
+        `aes(x = prehisp_towns, y =  colonial_towns))  +`
+
+        `geom_point() +`
+
+        `geom_smooth(method='lm')`
+
+    </div>
+
+```{r}
+
+prehisp_poly_col_p =  select(prehisp_poly,Name) %>% 
+  st_join(select(colonial_points,Placename), join = st_contains) %>% 
+  group_by(Name) %>% 
+  summarise(colonial_towns = n()) %>% 
+  st_join(prehisp_points, join = st_contains) %>% 
+  group_by(Name) %>% 
+  mutate(prehisp_towns = n()) %>% 
+  select(-id) %>% 
+  distinct() %>% 
+  select(colonial_towns,prehisp_towns) %>% 
+  st_drop_geometry()
+
+ggplot(data = prehisp_poly_col_p, aes(x = prehisp_towns, y =  colonial_towns))  +
+  geom_point() +
+  geom_smooth(method='lm')
+
+prehisp_poly_col_p = prehisp_poly_col_p %>% 
+  filter(prehisp_towns<11 & prehisp_towns>1)
+
+ggplot(data = prehisp_poly_col_p, aes(x = prehisp_towns, y =  colonial_towns))  +
+  geom_point() +
+  geom_smooth(method='lm')
+
+
+```
+
+------------------------------------------------------------------------
+
+# Raster data: subsetting
+
+-   We know how to retrieve values associated with specific cell IDs
+    -   or row and column combinations.
+-   Raster extraction can be by location (coordinates) and other spatial objects.
+-   **Coordinates subsetting**:
+    -   'translate' them into a cell ID with `cellFromXY()`.
+    -   alternatively, use `terra::extract()` (clashes with `tidyverse`).
+-   Find the value of the cell that covers a point located at coordinates of 0.1, 0.1.
+    -   use `elev`
+
+## Raster data: subsetting
+
+\tiny
+
+```{r}
+id = cellFromXY(elev, xy = matrix(c(0.1, 0.1), ncol = 2))
+elev[id]
+# the same as
+terra::extract(elev, matrix(c(0.1, 0.1), ncol = 2))
+```
+
+## Raster data: subsetting
+
+-   You can **subset** one raster with **another raster**, as demonstrated below:
+
+```{r}
+
+# raster with only 1s across 9 cells
+
+clip = rast(xmin = 0.9, xmax = 1.8, ymin = -0.45, ymax = 0.45,
+            resolution = 0.3, vals = rep(1, 9))
+elev[clip]
+# we can also use extract
+# terra::extract(elev, ext(clip))
+#plot(elev)
+#plot(clip, add=T,col="blue")
+```
+
+## Raster data: subsetting
+
+```{r}
+plot(elev)
+plot(clip, add=T,col="blue")
+```
+
+## Raster data: subsetting
+
+-   This amounts to retrieving the values of the first raster object (in this case elev) that fall within the extent of a second raster (here: clip).
+
+## Raster data: subsetting
+
+\tiny
+
+-   The preceding example returned **the values** of specific cells.
+
+-   In many cases one needs spatial outputs from subsetting rasters.
+
+    -   This can be done using the **\[** operator, with drop = FALSE.
+    -   obtain the first two cells of `elev` as a raster object (the first two cells on the top row).
+
+    ```{r fig6, fig.asp= .2}
+    plot(elev)
+    plot(elev[1:2, drop = FALSE] )
+    ```
+
+## Raster data: subsetting
+
+\tiny
+
+-   Another common use case of spatial subsetting is when a raster with logical (or NA) values is used to access (mask) another raster with the same extent and resolution.
+    -   In this case, the mask() function can be used.
+    -   first, create a mask object (called `rmask`) with random NA and TRUE values.
+    -   next, keep those values of elev which are TRUE in `rmask`.
+
+```{r fig7, fig.asp= .5}
+
+# create raster mask
+rmask = elev
+values(rmask) = sample(c(NA, TRUE), 36, replace = TRUE)
+
+# spatial subsetting
+
+plot(mask(elev, rmask))                   # with mask()
+
+```
+
+## Raster data: subsetting
+
+-   We can also use the square bracket operator to overwrite some values
+
+```{r}
+elev[elev < 20] = 100
+plot(elev)
+```
+
+## Map algebra operations
+
+-   Operations that modify or summarize raster cell values:
+    -   with reference to surrounding cells, zones, or statistical functions that apply to every cell.
+-   Recall that a raster's header comprises origin-resolution information.
+-   Terra uses headers to conduct MAO.
+    -   The headers of the raster datasets are queried checked to ensure the datasets are compatible (if more than one).
+    -   Second, map algebra retains the so-called one-to-one locational correspondence, meaning that **cells cannot move**.
+
+## Map algebra operations
+
+-   There are 4 categories of MAOs
+    -   Depend on the specifics of the neighboring cells used for processing.
+
+1.  Local or per-cell operations.
+2.  Focal or neighborhood operations. Most often the output cell value is the result of a 3 x 3 input cell block.
+3.  Zonal operations are similar to focal operations, but the surrounding pixel grid on which new values are computed can have irregular sizes and shapes.
+4.  Global or per-raster operations; that means the output cell derives its value potentially from one or several entire rasters.
+
+## MAO: local operations
+
+-   cell-by-cell operations in one or several layers.
+-   Raster algebra: includes adding or subtracting values from a raster, squaring and multiplying rasters.
+    -   includes logical operations: find all raster cells that are greater than a specific value.
+    -   The `terra` package supports all these operations
+
+```{r}
+data(elev)
+elev_sum = elev + elev
+elev_square = elev^2
+elev_log = log(elev)
+elev_5 = elev > 5
+
+```
+
+## MAO: local operations
+
+\tiny
+
+```{r}
+pal <- colorRampPalette(c("white","red"))
+plot(elev_sum, col=pal(15))
+
+```
+
+## MAO: local operations
+
+\tiny
+
+```{r}
+pal <- colorRampPalette(c("white","red"))
+
+plot(elev_square,col=pal(15))
+plot(elev_5, col=pal(7))
+
+```
+
+## MAO: local operations
+
+\tiny
+
+```{r}
+pal <- colorRampPalette(c("white","red"))
+
+plot(elev_5, col=pal(7))
+
+```
+
+## MAO: local operations
+
+-   Another local operation consist in creating groups of values:
+    -   low (class 1), middle (class 2) and high elevations (class 3).
+-   We need first to construct a reclassification matrix.
+    -   the first column corresponds to the **lower end** of the class.
+    -   the second column corresponds to the **upper end** of the class.
+    -   the third column represents the **new value** for the **specified ranges** in column one and two.
+-   Use the `classify()` command.
+
+## MAO: local operations
+
+```{r}
+rcl = matrix(c(0, 12, 1, 12, 24, 2, 24, 36, 3),
+             ncol = 3, byrow = TRUE)
+rcl
+```
+
+-   Here, we assign the raster values in the ranges 0--12, 12--24 and 24--36 are reclassified to take values 1, 2 and 3, respectively.
+
+## MAO: local operations
+
+```{r}
+recl = classify(rast(elev), rcl = rcl)
+```
+
+-   Note that classify is a function from `terra`. We need to use `rast` on `elev` to make it a suitable `terra`'s input.
+
+## MAO: local operations
+
+-   The `classify()` function can be also used when we want to reduce the number of classes in our categorical rasters.
+-   Apart of arithmetic operators, one can also use the app(), tapp() and lapp() functions.
+-   They are more efficient, hence, they are preferable in the presence of large raster datasets.
+-   Additionally, they allow you to save an output file directly.
+-   The app() function applies a function to each cell of a raster.
+    -   summarizes (e.g., calculating the sum) the values of multiple layers into one layer.
+-   `tapp()` extends app(), allowing us to select a subset of layers for which we want to perform a certain operation.
+-   `lapp()` applies a function to each cell using layers as arguments (more in a minute).
+
+## MAO: local operations
+
+**example: Normalized difference vegetation index (NDVI)** - is a well-known local (pixel-by-pixel) raster operation. - It returns a raster with values between -1 and 1; - Positive values indicate the presence of living plants (mostly \> 0.2). - Components of **NDVI** - **NIR** is a measure of light as well as **Red** calculated from satellite systems images. - The NVDI formula: $$NDVI=\frac{NIR-Red}{NIR+Red}$$
+
+## MAO: local operations
+
+\tiny
+
+-   Below we calculate the NDVI for a raster reflecting the Zion National Park.
+
+```{r}
+multi_raster_file = system.file("raster/landsat.tif", package = "spDataLarge")
+multi_rast = rast(multi_raster_file)
+
+# The raster object has four satellite bands - blue, green, red,
+# and near-infrared (NIR).
+# Our next step should be to implement the NDVI formula into an R function:
+
+# create a function that takes the two
+# types of light and computes NVDI
+
+ndvi_fun = function(nir, red){
+  (nir - red) / (nir + red)
+}
+```
+
+## MAO: local operations
+
+-   our function:
+    -   accepts two numerical arguments (`nir` and `red`).
+    -   returns a numerical vector with NDVI values
+-   It can be used as the `fun` argument of `lapp`.
+-   The raster contains 4 layers of light.
+-   We need two light layers: NIR and red from the raster which are the last two in a list of 4! (**mind the order**).
+-   That is why we subset the input raster with `multi_rast[[c(4, 3)]]` before doing any calculations.
+    -   This takes only the fourth and third of the layers.
+
+## MAO: local operations
+
+**lapp: Apply a function to layers of a SpatRaster, or sub-datasets**
+
+```{r}
+ndvi_rast = lapp(multi_rast[[c(4, 3)]], fun = ndvi_fun)
+```
+
+## MAO: local operations
+
+\tiny
+
+-   The largest NDVI values are connected to areas of dense forest in the North,
+-   The lowest values are related to a lake and snowy mountain ridges.
+
+```{r}
+plot(ndvi_rast)
+```
+
+## MAO: local operations
+
+-   Predictive mapping is another interesting application of local raster operations.
+-   The **dependent variable** corresponds to measured or observed points in space: pollution detectors.
+-   We can employ space predictor variables from various rasters (elevation, population density, temperature, etc.).
+-   Subsequently, we model our response as a function of our predictors
+    -   using `lm()`, `glm()`, `gam()` or a machine-learning technique.
+-   Then we construct predicted pollution values applying estimated coefficients to the predictor raster values.
+    -   Do you remember pollution and housing prices' example?
+
+## MAO: focal operations
+
+-   Focal operations work on a central (focal) cell and its neighbors.
+-   The neighborhood (kernel) is typically of size 3-by-3 cells
+    -   central cell and its eight surrounding neighbors,
+    -   but can take on any other shape as defined by the user.
+-   A focal operation applies an aggregation function to all cells within the specified neighborhood.
+    -   the output is set as the new value for the the central cell
+    -   the algorithm then moves on to the next central cell.
+-   Other names for this operation are spatial filtering and convolution.
+
+## MAO: focal operations
+
+## MAO: focal operations
+
+-   In R, we can use the `focal()` function to perform **spatial filtering**.
+-   We define the kernel with a matrix whose values correspond to weights
+-   Secondly, the `fun` parameter lets us specify the aggregation function we wish to apply to this neighborhood.
+-   In what follows we choose the minimum.
+
+## MAO: focal operations
+
+```{r}
+# First construct the kernel (AKA mooving window)
+
+(w = matrix(1, nrow = 3, ncol = 3))
+
+# Now apply focal to the elevation data. 
+
+r_focal = focal(elev, w, fun = min)
+```
+
+## MAO: focal operations
+
+\tiny
+
+```{r, figures-side, fig.show="hold", out.width="25%"}
+
+par(mar = c(4, 4, .3, .3))
+plot(elev)
+plot(r_focal)
+# Use terra's values() to visualize the output.
+matrix(terra::values(elev),nrow = 6, ncol = 6)
+matrix(terra::values(r_focal),nrow = 6, ncol = 6)
+```
+
+## MAO: focal operations
+
+-   In this example, the weighting matrix consists only of 1s, meaning each cell has the same weight on the output, but this can be changed.
+    -   Focal functions play a dominant role in image processing.
+    -   Low-pass or smoothing focal functions use `mean` to remove extremes.
+    -   With categorical data, we can replace the mean with the mode (most common value).
+-   By contrast, high-pass filters accentuate features.
+    -   The Laplace and Sobel filters might serve as an example here.
+
+## MAO: focal operations
+
+### Terrain processing
+
+-   Calculation of topographic characteristics such as ground **slope** relies on focal functions.
+-   terrain() can be used to calculate these metrics
+    -   R provides several ground-processing algorithms including curvature and wetness indices.
+
+## MAO: Zonal operations
+
+-   Zonal operations apply an aggregation function to multiple raster cells.
+-   However, a second raster (with categorical values) defines the zones of interest
+    -   as opposed to a predefined neighborhood window (focal)
+    -   consequently, raster cells defining the zonal filter do not necessarily have to be neighbors
+-   Our grain (or ground, as we defined it earlier) raster is a good example: different grain sizes are spread irregularly throughout the raster.
+-   The result of a zonal operation is a **summary table** grouped by zone.
+    -   which is why this operation is also known as zonal statistics in GIS jargon.
+    -   This is in **contrast to focal operations** which return a **raster** object.
+
+## MAO: Zonal operations
+
+\tiny
+
+-   The following code chunk uses `terra`'s `zonal()` function to calculate the **mean elevation** associated with each grain size class, for example.
+
+```{r}
+# first let's check the grain's structure
+dim(grain)
+matrix(values(grain),nrow = 6,ncol = 6)
+cats(grain)
+# let's apply the zonal function to elev using grain as a filter provider.
+# it tell us about the elevation per grain-type/size
+z = zonal(rast(elev), grain, fun = "mean")
+z
+```
+
+-   This returns the the mean altitude for each grain size class. \tiny  - it is also possible to get a raster with calculated statistics for each zone by setting the `as.raster` argument to `TRUE`.
+
+## MAO: global operations and distances
+
+-   Global operations: zonal operations with the entire raster dataset representing a single zone.
+    -   The most common global operations are descriptive statistics for the entire raster dataset (the minimum or maximum).
+-   Useful for the computation of distance and weight rasters.
+-   In the first case, one can calculate the distance from each cell to a specific target cell.
+-   For example, one might want to compute the distance to the nearest coast (see also `terra::distance()`).
+-   We might also want to consider mountains:
+    -   instead of pure distances, we would like also to consider that a trip is longer when mountain are amid the way.
+    -   we can weight the distance with elevation to 'prolong' the Euclidean distance.
+
+## MAO: global operations and distances
+
+**example** - build a raster of the continents of the world where each cell equals the distance of that cell to the nearest coast. - This map must highlight the land areas that are most isolated inland. - Use raster::distance - it calculates the distance from each NA cell to the closest non-NA cell. - we need to create a raster that has NA for land pixels, and some other value for non-land pixels. - Use `raster::rasterize` - It transfers values associated with countries (polygons) to raster cells. - Values are transferred if the polygon covers the center of a raster cell.
+
+## MAO: global operations and distances
+
+\tiny
+
+**example**
+
+```{r}
+library(maptools) # for data below
+data(wrld_simpl)
+
+# Here we use the raster package, but could have used terra instaed.
+# Create a raster template. 
+# (set the desired grid resolution with res)
+
+r <- raster::raster(xmn=-180, xmx=180, ymn=-90, ymx=90, res=1)
+
+# Rasterize the countries polygons: 1 for land cells
+# Nas for water.
+
+r2 <- raster::rasterize(wrld_simpl, r, 1)
+
+```
+
+## MAO: global operations and distances
+
+\tiny
+
+```{r fig20, fig.asp= .5}
+
+# the condition below is a land-sea indicator
+# cond = is.na(r2)
+
+# set land pixels to NA # water-pixels to sea
+# maskvalue: what we want for water.
+# updatevalue: what we want for land
+
+r3 <- mask(is.na(r2), r2, maskvalue=1, updatevalue=NA)
+
+# Calculate distance to nearest non-NA pixel
+# don't run it, it takes too long
+
+d <- raster::distance(r3)
+
+plot(d)
+
+```
+
+## Map algebra counterparts in vector processing
+
+-   Many map algebra operations have a counterpart in vector processing.
+-   Vector buffer operation: parallels computing a distance raster (global operation) while only considering a maximum distance (logical focal operation).
+-   Reclassifying raster data (either local or zonal function depending on the input) is equivalent to dissolving vector data (Section 4.2.4).
+-   Overlaying two rasters (local operation), where one contains NULL or NA values representing a mask, is similar to vector clipping (more later).
+-   Quite similar to spatial clipping is intersecting two layers.
+
+## Merging rasters
+
+**example** - Suppose we need to conduct a study in an area that covers both Austria and Switzerland. - but we have separate raster for both countries. - In the following code chunk we first download the elevation data for Austria and Switzerland. - For the country codes, see the geodata function country_codes() - In a second step, we merge the two rasters into one.
+
+## Merging rasters
+
+\tiny
+
+```{r, fig12, figures-side, fig.show="hold", out.width="25%"}
+aut = geodata::elevation_30s(country = "AUT", path = tempdir())
+ch = geodata::elevation_30s(country = "CHE", path = tempdir())
+aut_ch = merge(aut, ch)
+par(mar = c(4, 4, .3, .3))
+plot(aut)
+plot(ch)
+plot(aut_ch)
+# terra’s merge() command combines two images,
+# and in case they overlap, it uses the value of the first raster.
+```
+
+## Merging rasters
+
+-   The function `mosaic()` allows you to define what todo when the rasters overlap but the variable's values are different.
+    -   you can for instance, take the mean of both rasters' values within the overlapping region.
+
+## Bonus: elevation weighted distance
+
+-   get an elevation-raster of Spain
+-   Compute a raster which represents the distance to the coast.
+-   For speed, before computing the distance raster, increase the resolution of the input raster
+-   Secondly, weight the distance raster with elevation.
+    -   Every 100 **altitudinal meters** should increase the distance to the coast by 10 km.
+    -   Finally, compute the difference between the raster using the euclidean distance and the raster weighted by elevation.
+
+## Bonus: elevation weighted distance
+
+\tiny
+
+```{r}
+library(raster)
+# find out the ISO_3 code of Spain
+dplyr::filter(ccodes(), NAME %in% "Spain")
+# retrieve a data -elevation-model of Spain
+dem = getData("alt", country = "ESP", mask = FALSE)
+# change the resolution to decrease computing time
+agg = aggregate(dem, fact = 5)
+#spain polygons
+esp = getData("GADM", country = "ESP", level = 1)
+
+```
+
+## Bonus: elevation weighted distance
+
+```{r, fig30, figures-side, fig.show="hold", out.width="25%"}
+
+par(mar = c(4, 4, .3, .3))
+plot(dem)
+# visualize NAs
+plot(is.na(agg))
+
+```
+
+## Bonus: elevation weighted distance
+
+\small
+
+```{r}
+
+# construct a distance input raster
+# we have to set the land cells to NA 
+# and the sea cells to an arbitrary value since 
+# raster::distance computes the distance to
+# the nearest non-NA cell
+dist = is.na(agg)
+cellStats(dist, summary)
+# convert land cells into NAs and sea cells into 1s
+dist[dist == FALSE] = NA
+dist[dist == TRUE] = 1
+#plot(dist)
+
+```
+
+## Bonus: elevation weighted distance
+
+```{r}
+plot(dist)
+```
+
+## Bonus: elevation weighted distance
+
+-   So far we have a raster of land-sea indicators (`dist`)
+-   We also have an elevation raster of Spain (`agg`)
+-   And the Spain polygons (`esp`)
+-   Let's compute the the land-to-water distances.
+    -   `dist = raster::distance(dist)`
+-   Restrict the focus to inland cells.
+    -   Use the Spain polygons to do that.
+-   Recall that the elevation data is measured in altitudinal meters.
+
+## Bonus: elevation weighted distance
+
+```{r}
+# compute distance to nearest non-NA cell
+dist = raster::distance(dist)
+# erase cells' contents that are not mainland. 
+dist = mask(dist, esp)
+agg = mask(agg, esp)
+# convert distance into km
+dist = dist / 1000
+# now let's weight each 100 altitudinal m.
+# by an additional distance of 10 km.
+agg[agg < 0] = 0 # only positive elevation.
+# now create a raster with 
+# elev-weighted distance data.
+weight = dist + agg / 100 * 10 
+#plot(weight - dist)
+
+```
+
+## Bonus: elevation weighted distance
+
+```{r}
+plot(weight - dist)
+```

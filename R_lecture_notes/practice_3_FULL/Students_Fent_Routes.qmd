@@ -1,0 +1,199 @@
+# Introduction
+
+Draw the fastest routes between the Mexican ports that can be receiving fentanyl from China and some border crossings in the north. For these activities we will use `osrm` which enables us to find routes.
+
+-   First let's use [**Google Earth**]{.underline} to see how to get the Mexican ports shape-file.
+
+## Packages
+
+```{r}
+
+library(sf)
+library(tmap)
+library(osrm)
+library(tidyverse)
+library(here)
+
+```
+
+## Data
+
+```{r}
+
+drug_data = readRDS(here("Data","drug_regions","poppy_mari_fent_ports.RData"))
+
+mex_hom = readRDS(here("Data","hom_mex.RData"))
+
+# Now, let's get the Mex-US border-crossing points.
+
+cross_p = st_read(here("Data","cross_p",
+                       "yv333xj1559.shp"))
+
+# Let's load the Mexican contour, excluding the islands.
+
+mex_shore = st_read(here("Data","drug_regions","ContornoMex","contdv1mgw.shp")) %>% 
+  filter(COV_ID == 404) %>% 
+  st_as_sfc()
+
+# Let's load the Mexican municipalities' geometries.
+
+mex_mun = st_read(here("Data","drug_regions",
+                       "mexico_polygons",
+                       "Municipios_2010_5.shp")) %>% 
+  mutate(idmun = paste0(CVE_ENT,CVE_MUN)) %>% 
+  select(idmun)
+
+
+```
+
+# Mexican Ports and Crossing Points
+
+```{r}
+
+# plot the Mexican Ports along with the country's contour.
+# Use tmap
+
+tm_shape(cross_p) +
+  tm_dots(size =.4) +
+  tm_shape(mex_shore) + 
+  tm_polygons() 
+
+
+```
+
+### Us-Mex CP.
+
+```{r}
+
+# Define the northern border US states. 
+
+front_states = c("TX", "AZ", "NM", "CA")
+
+# Focus on the crossing points within these states.
+
+cross_p_mex = cross_p %>% 
+  filter(state %in% front_states)
+  
+
+# Draw a map with only the above crossing points and Mexico's shores.
+
+tm_shape(cross_p_mex) +
+  tm_dots(size =.4) +
+  tm_shape(mex_shore) + 
+  tm_polygons() 
+
+  
+```
+
+### Most transited CPs.
+
+We saw that there several crossing points to look at, but only a few are severely congested. Let's focus on the latter since fentanyl shipments are more likely to be smuggled through them.
+
+```{r}
+
+# get the top 15% CPs in terms of trucks.
+
+cross_p_mex_top = cross_p_mex %>% 
+  slice_max(order_by = trucks, prop = .15)#select to 15% 
+
+# Let's have a look at the map below. 
+
+tm_shape(mex_shore) +
+  tm_polygons() +
+  tm_shape(cross_p_mex) + 
+  tm_dots(size = .4) +
+  tm_shape(cross_p_mex_top) + 
+  tm_dots(size = 1.5, col = "blue")
+
+```
+
+### Add the pacific-Mexican ports
+
+```{r}
+
+#ports = st_read(here("Data","pacific_ports","ports .RData"), layer = "My Places")
+
+(my_map = tm_shape(mex_shore) +
+  tm_polygons() +
+  tm_shape(cross_p_mex) + 
+  tm_dots(size = .4) +
+  tm_shape(cross_p_mex_top) + 
+  tm_dots(size = 1.5, col = "blue") +
+  tm_shape(ports) + 
+  tm_dots(size=.4, col = "green")
+)
+
+```
+
+# Best Routes
+
+### An Example
+
+Here we will use the `osrm` package to find out the fastest routes connecting the Mexican ports and the CPs.
+
+```{r}
+
+# Use the following function
+
+# osrmRoute(src = the starting point ("zihuatanejo_airport"),
+# dst = the destination ("Hidalgo"))
+
+zit_laredo_route <- osrmRoute(src= filter(ports,Name=="zihuatanejo_airport"),
+                   dst = filter(cross_p_mex,portname=="Hidalgo"))
+
+# expand my_map displaying the shortest route from above.
+
+my_map +
+  tm_shape(zit_laredo_route) +
+  tm_lines()
+```
+
+### Functional Programming
+
+Here, we want to construct a function that based on two datasets with points, it calculates the best routes between two user's defined points.
+
+-   We need to see how to filter by a user-defined column.
+
+-   This is different from previous lecture's examples:
+
+-   <div>
+
+    -   We need to define a symbol using `rlang::sym` alongside `!!`
+
+    </div>
+
+```{r}
+
+library(rlang)
+
+start_end_route = function(names_vec, #  like c("zihuatanejo_airport","Hidalgo")
+                           col_names , # like c("Name","portname")
+                           data_1, # like ports
+                           data_2){ # like cross_p_mex_top
+  
+  col_1 = col_names[1] # "Name"
+  col_2 = col_names[2] # "portname"
+  name_1 = names_vec[1] # "zihuatanejo_airport"
+  name_2 = names_vec[2] # "Hidalgo"
+  
+  output = osrmRoute(src = filter(data_1, !!sym(col_1)==name_1), # "Name" == "zihuatanejo_airport"
+                   dst = filter(data_2,!!sym(col_2)==name_2))    # "portname" == "Hidalgo"
+  
+}
+
+```
+
+```{r}
+
+# test the function
+
+example = start_end_route(names_vec = c("zihuatanejo_airport","Hidalgo"),
+                col_names = c("Name","portname"),
+                data_1 = ports,
+                data_2 = cross_p_mex_top)
+
+# Draw a quick map of the route.
+
+plot(st_as_sfc(example))
+
+```
